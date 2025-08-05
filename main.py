@@ -4,11 +4,11 @@ import os
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("機器人已啟動，收到你的訊息囉！")
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ 機器人收到訊息囉！")
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-print("✅ 機器人正在執行...")
-app.run_polling()
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("🤖 機器人啟動中...")
+    app.run_polling()
