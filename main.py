@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+WEBHOOK_URL = os.environ["WEBHOOK_URL"]  # 正確從環境變數讀取網址
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("你好，我是機器人！")
@@ -15,5 +15,5 @@ app.add_handler(CommandHandler("start", start))
 app.run_webhook(
     listen="0.0.0.0",
     port=10000,
-    webhook_url=https://money-5jce.onrender.com
+    webhook_url=WEBHOOK_URL   # ✅ 正確寫法，這樣才不會出錯
 )
