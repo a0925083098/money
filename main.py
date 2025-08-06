@@ -110,29 +110,49 @@ def get_prediction(columns, roads):
     third_last = recent[-3]
 
     long_streak = (last == second_last == third_last)
-    red_bias = red_count > blue_count + 2
-    blue_bias = blue_count > red_count + 2
+    red_bias = red_count > blue_count + 4  # 提高門檻，避免偏閒
+    blue_bias = blue_count > red_count + 4
 
-    # 預測邏輯
-    if long_streak:
-        predict = last
-        reason = "根據當前連續趨勢，預測延續同方。"
+    score_banker = 0
+    score_player = 0
 
-    elif red_bias and count_banker > count_player:
+    # 主路趨勢強 → 加分
+    if long_streak and last == "莊":
+        score_banker += 3
+    elif long_streak and last == "閒":
+        score_player += 3
+
+    # 副路判斷加分
+    if red_bias:
+        score_banker += 2
+    if blue_bias:
+        score_player += 2
+
+    # 總場數加分
+    if count_banker > count_player:
+        score_banker += 1
+    elif count_player > count_banker:
+        score_player += 1
+
+    # 決定預測
+    if score_banker > score_player:
         predict = "莊"
-        reason = "多路偏紅且主路莊方占優，預測莊方延續。"
-
-    elif blue_bias and count_player > count_banker:
+    elif score_player > score_banker:
         predict = "閒"
-        reason = "副路偏藍且閒方近期增強，預測轉向閒方。"
-
-    elif abs(red_count - blue_count) <= 2:
-        predict = last
-        reason = "路單紅藍接近，預測延續最近趨勢。"
-
     else:
-        predict = last
-        reason = "走勢無明顯規律，選擇觀望或延續最近一顆。"
+        predict = last  # 若平分則跟隨最近一顆
+
+    # 統合分析說明
+    if long_streak:
+        reason = "根據當前連續趨勢，預測延續同方。"
+    elif abs(score_banker - score_player) <= 1:
+        reason = "路單接近，預測延續最近趨勢。"
+    elif predict == "莊":
+        reason = "根據副路與主路多項優勢，預測莊方延續。"
+    elif predict == "閒":
+        reason = "副路偏藍且閒方近期穩定，預測轉向閒方。"
+    else:
+        reason = "走勢無明顯規律，選擇觀望。"
 
     return predict, f"莊 {banker_rate}%、閒 {player_rate}%", reason
 
