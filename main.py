@@ -10,8 +10,7 @@ from telegram.ext import (
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 WEBHOOK_URL = os.environ["WEBHOOK_URL"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-openai.api_key = OPENAI_API_KEY
+openai.api_key = os.environ["OPENAI_API_KEY"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,7 +100,7 @@ def summarize_history(columns, roads):
     return history_text
 
 
-async def gpt_predict_baccarat(columns, roads):
+def gpt_predict_baccarat(columns, roads):
     history = summarize_history(columns, roads)
 
     prompt = (
@@ -113,7 +112,7 @@ async def gpt_predict_baccarat(columns, roads):
     )
 
     try:
-        response = await openai.chat.completions.create(
+        response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
@@ -136,7 +135,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         columns = analyze_baccarat_image(temp_path)
         roads = generate_all_roads(columns)
-        result = await gpt_predict_baccarat(columns, roads)
+        result = gpt_predict_baccarat(columns, roads)
         await update.message.reply_text(result)
     except Exception as e:
         await update.message.reply_text(f"⚠️ 分析錯誤：{e}")
