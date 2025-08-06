@@ -4,18 +4,20 @@ import cv2
 import numpy as np
 import openai
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+)
 
-# ✅ 設定 API KEY
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 WEBHOOK_URL = os.environ["WEBHOOK_URL"]
-openai.api_key = os.environ["OPENAI_API_KEY"]  # Render 設定變數
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+openai.api_key = OPENAI_API_KEY
 
-# ✅ Telegram 起始指令
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("你好，我是百家樂預測機器人！請傳牌路圖片給我分析。")
 
-# ✅ 圖片辨識莊閒和位置
+
 def analyze_baccarat_image(image_path: str, cell_size=30):
     image = cv2.imread(image_path)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -38,6 +40,7 @@ def analyze_baccarat_image(image_path: str, cell_size=30):
     contours_green = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
 
     points = []
+
     def process_contours(contours, label):
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
@@ -67,7 +70,7 @@ def analyze_baccarat_image(image_path: str, cell_size=30):
 
     return columns
 
-# ✅ 生成副路資料
+
 def generate_road(columns, offset):
     road = []
     for col in range(offset, len(columns)):
@@ -79,6 +82,7 @@ def generate_road(columns, offset):
             road.append("藍")
     return road
 
+
 def generate_all_roads(columns):
     return {
         "大眼仔": generate_road(columns, 1),
@@ -86,34 +90,30 @@ def generate_all_roads(columns):
         "蟑螂路": generate_road(columns, 3),
     }
 
-# ✅ GPT 預測邏輯
-def get_prediction_with_gpt(columns, roads):
-    flat = [x for col in columns for x in col][-60:]  # 限制輸入長度
-    input_sequence = " ".join(flat)
 
-    road_text = "\n".join([f"{name}：{' '.join(road)}" for name, road in roads.items()])
+def summarize_history(columns, roads):
+    history_text = "主路：\n"
+    for col in columns:
+        history_text += "".join(col) + "\n"
+    history_text += "\n副路統計：\n"
+    for name, road in roads.items():
+        history_text += f"{name}：{''.join(road)}\n"
+    return history_text
 
-    prompt = f"""
-你是一位資深百家樂看路專家，請根據以下牌路資料進行預測：
-主要牌路：
-{input_sequence}
 
-副路走勢：
-{road_text}
+async def gpt_predict_baccarat(columns, roads):
+    history = summarize_history(columns, roads)
 
-請預測下一顆開出的是「莊」或「閒」，並提供：
-1. ✅ 預測
-2. 📊 勝率（莊幾%、閒幾%）
-3. 🧠 統合分析（語意清晰且合理）
-
-輸出格式如下：
-✅ 預測：莊
-📊 勝率：莊 52.3%、閒 47.7%
-🧠 統合分析：根據連續性趨勢與副路偏紅，預測莊方延續。
-"""
+    prompt = (
+        "你是百家樂預測專家。請根據以下牌路，分析下一局可能開出『莊』或『閒』，並輸出以下格式：\n\n"
+        "✅ 預測：莊 或 閒\n"
+        "📊 勝率：莊 X%、閒 Y%\n"
+        "🧠 統合分析：根據目前走勢與副路趨勢，進行策略判斷與說明。\n\n"
+        f"牌路內容如下：\n{history}"
+    )
 
     try:
-        response = openai.chat.completions.create(
+        response = await openai.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
@@ -122,7 +122,7 @@ def get_prediction_with_gpt(columns, roads):
     except Exception as e:
         return f"⚠️ GPT 分析失敗：\n{e}"
 
-# ✅ 處理圖片訊息
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 圖片已接收，開始分析...")
 
@@ -136,19 +136,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         columns = analyze_baccarat_image(temp_path)
         roads = generate_all_roads(columns)
-        gpt_reply = get_prediction_with_gpt(columns, roads)
-        await update.message.reply_text(gpt_reply)
-
+        result = await gpt_predict_baccarat(columns, roads)
+        await update.message.reply_text(result)
     except Exception as e:
         await update.message.reply_text(f"⚠️ 分析錯誤：{e}")
 
-# ✅ 啟動 Telegram Bot Webhook
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-app.run_webhook(
-    listen="0.0.0.0",
-    port=10000,
-    webhook_url=WEBHOOK_URL
-)
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=10000,
+        webhook_url=WEBHOOK_URL
+    )
