@@ -2,3 +2,5 @@ python-telegram-bot[webhooks]==20.8
 pytesseract
 Pillow
 requests
+opencv-python
+numpy
