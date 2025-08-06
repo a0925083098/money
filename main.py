@@ -14,6 +14,31 @@ WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("你好，我是百家樂預測機器人！請傳牌路圖片給我分析。")
 
+# ➤ 智能預測策略邏輯
+def predict_next(columns):
+    flat = [x for col in columns for x in col]
+    recent = flat[-6:]
+
+    if len(recent) < 3:
+        return "無法預測"
+
+    # 三連一樣 → 預測延續
+    if recent[-1] == recent[-2] == recent[-3]:
+        return recent[-1]
+
+    # 雙跳 → 預測對稱延續
+    if recent[-4:] == ['莊', '閒', '莊', '閒']:
+        return '閒'
+    if recent[-4:] == ['閒', '莊', '閒', '莊']:
+        return '莊'
+
+    # 最近兩顆不同 → 預測換邊
+    if recent[-1] != recent[-2]:
+        return recent[-1]
+
+    # 其他情況 → 跟最後一顆
+    return recent[-1]
+
 # ➤ 傳圖片觸發
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 圖片已接收，開始分析...")
@@ -32,9 +57,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 分析失敗，請確認圖片清晰並為牌路圖。")
             return
 
-        last_column = result[-1] if result else []
-        next_prediction = last_column[-1] if last_column else "未知"
+        # 預測下一顆
+        next_prediction = predict_next(result)
 
+        # 計算莊/閒勝率
         flat = [x for col in result for x in col]
         banker_count = flat.count("莊")
         player_count = flat.count("閒")
@@ -48,14 +74,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = (
             f"✅ 預測：{next_prediction}\n"
             f"📊 勝率：莊 {banker_rate}%、閒 {player_rate}%\n"
-            f"🧠 策略分析：根據最後一欄趨勢，預測延續「{next_prediction}」。"
+            f"🧠 策略分析：根據近期牌路規則預測下一顆。"
         )
         await update.message.reply_text(reply)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ 分析時發生錯誤：{e}")
 
-# ➤ 分析圖片主函數
+# ➤ 圖片辨識牌路函數
 def analyze_baccarat_image(image_path: str, cell_size=30):
     image = cv2.imread(image_path)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
