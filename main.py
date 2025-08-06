@@ -1,6 +1,5 @@
 import os
 import tempfile
-import uuid
 import cv2
 import numpy as np
 from telegram import Update
@@ -9,10 +8,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 
+# 使用者預測紀錄
+user_last_prediction = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("你好，我是百家樂預測機器人！請傳牌路圖片給我分析。")
-
 
 def analyze_baccarat_image(image_path: str, cell_size=30):
     image = cv2.imread(image_path)
@@ -66,7 +66,6 @@ def analyze_baccarat_image(image_path: str, cell_size=30):
 
     return columns
 
-
 def generate_road(columns, offset):
     road = []
     for col in range(offset, len(columns)):
@@ -84,7 +83,6 @@ def generate_all_roads(columns):
         "小路": generate_road(columns, 2),
         "蟑螂路": generate_road(columns, 3),
     }
-
 
 def get_prediction(columns, roads):
     flat = [x for col in columns for x in col]
@@ -110,39 +108,34 @@ def get_prediction(columns, roads):
     third_last = recent[-3]
 
     long_streak = (last == second_last == third_last)
-    red_bias = red_count > blue_count + 4  # 提高門檻，避免偏閒
+    red_bias = red_count > blue_count + 4
     blue_bias = blue_count > red_count + 4
 
     score_banker = 0
     score_player = 0
 
-    # 主路趨勢強 → 加分
     if long_streak and last == "莊":
         score_banker += 3
     elif long_streak and last == "閒":
         score_player += 3
 
-    # 副路判斷加分
     if red_bias:
         score_banker += 2
     if blue_bias:
         score_player += 2
 
-    # 總場數加分
     if count_banker > count_player:
         score_banker += 1
     elif count_player > count_banker:
         score_player += 1
 
-    # 決定預測
     if score_banker > score_player:
         predict = "莊"
     elif score_player > score_banker:
         predict = "閒"
     else:
-        predict = last  # 若平分則跟隨最近一顆
+        predict = last
 
-    # 統合分析說明
     if long_streak:
         reason = "根據當前連續趨勢，預測延續同方。"
     elif abs(score_banker - score_player) <= 1:
@@ -159,6 +152,8 @@ def get_prediction(columns, roads):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 圖片已接收，開始分析...")
 
+    user_id = update.message.from_user.id
+
     photo_file = await update.message.photo[-1].get_file()
     image_bytes = await photo_file.download_as_bytearray()
 
@@ -171,11 +166,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         roads = generate_all_roads(columns)
         prediction, rate_text, reason = get_prediction(columns, roads)
 
-        # 判斷勝率中哪個高
         banker_percent = float(rate_text.split("莊")[1].split("%")[0].strip())
         player_percent = float(rate_text.split("閒")[1].split("%")[0].strip())
 
-        # 若預測與勝率相反 → 顯示提醒
         note = ""
         if (prediction == "莊" and player_percent > banker_percent) or \
            (prediction == "閒" and banker_percent > player_percent):
@@ -186,17 +179,38 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 勝率：{rate_text}\n"
             f"🧠 統合分析：{reason}{note}"
         )
+
+        user_last_prediction[user_id] = prediction
         await update.message.reply_text(reply)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ 分析錯誤：{e}")
 
+async def handle_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    args = context.args
+
+    if not args or args[0] not in ["莊", "閒"]:
+        await update.message.reply_text("請使用正確格式：/result 莊 或 /result 閒")
+        return
+
+    actual = args[0]
+    predicted = user_last_prediction.get(user_id)
+
+    if not predicted:
+        await update.message.reply_text("⚠️ 尚未有預測資料，請先傳圖片分析。")
+        return
+
+    if actual == predicted:
+        await update.message.reply_text("✅ 預測正確！我會記住這次成功。")
+    else:
+        await update.message.reply_text("❌ 預測錯誤！我會記錄這次錯誤，下次再努力。")
+
+    user_last_prediction.pop(user_id)
+
+# 機器人啟動
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("result", handle_result))
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-app.run_webhook(
-    listen="0.0.0.0",
-    port=10000,
-    webhook_url=WEBHOOK_URL
-)
+app.run_webhook(listen="0.0.0.0", port=10000, webhook_url=WEBHOOK_URL)
