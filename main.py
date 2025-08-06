@@ -151,16 +151,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         roads = generate_all_roads(columns)
         prediction, rate_text, reason = get_prediction(columns, roads)
 
+        # 判斷勝率中哪個高
+        banker_percent = float(rate_text.split("莊")[1].split("%")[0].strip())
+        player_percent = float(rate_text.split("閒")[1].split("%")[0].strip())
+
+        # 若預測與勝率相反 → 顯示提醒
+        note = ""
+        if (prediction == "莊" and player_percent > banker_percent) or \
+           (prediction == "閒" and banker_percent > player_percent):
+            note = "\n⚠️ 預測與總勝率方向不同，代表策略預測走勢反轉或續勢。"
+
         reply = (
             f"✅ 預測：{prediction}\n"
             f"📊 勝率：{rate_text}\n"
-            f"🧠 統合分析：{reason}"
+            f"🧠 統合分析：{reason}{note}"
         )
         await update.message.reply_text(reply)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ 分析錯誤：{e}")
-
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
