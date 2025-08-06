@@ -22,10 +22,15 @@ def ocr_image_by_url(image_url):
     response = requests.post(api_url, data=payload)
     result = response.json()
 
-    try:
-        return result["ParsedResults"][0]["ParsedText"]
-    except (KeyError, IndexError) as e:
-        return f"❌ 分析失敗：{e}"
+    # 顯示完整結果供除錯用（部署時可以移除這行）
+    print("🔍 OCR 回傳內容：", result)
+
+    # 安全檢查結果
+    if "ParsedResults" in result and result["ParsedResults"]:
+        return result["ParsedResults"][0].get("ParsedText", "❌ 找不到文字")
+    else:
+        error_message = result.get("ErrorMessage") or result.get("OCRExitCode")
+        return f"❌ 分析失敗：{error_message or '無法取得結果'}"
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 圖片已接收，開始分析...")
