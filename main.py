@@ -104,22 +104,37 @@ def get_prediction(columns, roads):
         red_count += road.count("紅")
         blue_count += road.count("藍")
 
-    # 統合邏輯
-    if recent[-1] == recent[-2] == recent[-3]:
-        predict = recent[-1]
+    recent_trend = recent[-3:]
+    last = recent[-1]
+    second_last = recent[-2]
+    third_last = recent[-3]
+
+    long_streak = (last == second_last == third_last)
+    red_bias = red_count > blue_count + 2
+    blue_bias = blue_count > red_count + 2
+
+    # 預測邏輯
+    if long_streak:
+        predict = last
         reason = "根據當前連續趨勢，預測延續同方。"
-    elif red_count > blue_count + 2:
+
+    elif red_bias and count_banker > count_player:
         predict = "莊"
-        reason = "多路一致偏紅，推測莊方延續優勢。"
-    elif blue_count > red_count + 2:
+        reason = "多路偏紅且主路莊方占優，預測莊方延續。"
+
+    elif blue_bias and count_player > count_banker:
         predict = "閒"
-        reason = "副路偏藍且轉折頻繁，預測主方轉變。"
+        reason = "副路偏藍且閒方近期增強，預測轉向閒方。"
+
+    elif abs(red_count - blue_count) <= 2:
+        predict = last
+        reason = "路單紅藍接近，預測延續最近趨勢。"
+
     else:
-        predict = recent[-1]
-        reason = "路單分歧，建議觀望等待明確方向。"
+        predict = last
+        reason = "走勢無明顯規律，選擇觀望或延續最近一顆。"
 
     return predict, f"莊 {banker_rate}%、閒 {player_rate}%", reason
-
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 圖片已接收，開始分析...")
