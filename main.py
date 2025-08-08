@@ -1,7 +1,8 @@
-import os, io, time, logging
-from typing import Dict, Any, List
+import os, io, time, logging, json
+from typing import List
 import requests
 from PIL import Image, ImageOps, ImageFilter
+from openai import OpenAI
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -10,12 +11,16 @@ from telegram.ext import (
 )
 
 # ====== 環境變數 ======
-BOT_TOKEN   = os.environ["BOT_TOKEN"]
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-OCR_API_KEY = os.environ.get("OCR_API_KEY", "helloworld")
+BOT_TOKEN       = os.environ["BOT_TOKEN"]
+WEBHOOK_URL     = os.environ.get("WEBHOOK_URL")
+OCR_API_KEY     = os.environ.get("OCR_API_KEY", "helloworld")
+OPENAI_API_KEY  = os.environ["OPENAI_API_KEY"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("baccarat-bot")
+
+# OpenAI 客戶端
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ====== 快捷鍵（常駐）======
 REPLY_KB = ReplyKeyboardMarkup(
@@ -50,31 +55,54 @@ def ocr_space_image(img_jpg_bytes: bytes) -> str:
     except Exception as e:
         log.exception("OCR error: %s", e); return ""
 
-# ====== 簡易建模 + 預測（可之後換 GPT）======
-def build_room_from_ocr_text(txt: str) -> Dict[str, Any]:
+# ====== 從 OCR 文字建構歷史序列 ======
+def build_history_from_text(txt: str) -> List[str]:
     hist: List[str] = []
     for ch in txt:
-        if ch in ("莊","閒"): hist.append(ch)
-        if ch.upper()=="B": hist.append("莊")
-        if ch.upper()=="P": hist.append("閒")
-    if len(hist) < 6: hist = (["莊","閒"]*6)[:12]
-    model = {
-        "total": len(hist),
-        "banker_count": sum(1 for x in hist if x=="莊"),
-        "player_count": sum(1 for x in hist if x=="閒"),
-    }
-    return {"history": hist, "model": model}
+        if ch in ("莊", "閒"): hist.append(ch)
+        if ch.upper() == "B": hist.append("莊")
+        if ch.upper() == "P": hist.append("閒")
+    if len(hist) < 6:  # 避免空，塞假資料
+        hist = (["莊", "閒"] * 6)[:12]
+    return hist
 
-def simple_predict(history: List[str]) -> Dict[str, Any]:
-    look = history[-6:] if len(history)>=6 else history[:]
-    b = sum(1 for x in look if x=="莊"); p = len(look)-b
-    if b>p: pick="莊"; p_bank = 0.55 + min(0.1,(b-p)*0.03)
-    elif p>b: pick="閒"; p_bank = 1-(0.55 + min(0.1,(p-b)*0.03))
-    else: pick="閒" if (look and look[-1]=="莊") else "莊"; p_bank=0.50
-    return {"pick":pick, "p_bank":round(p_bank,2), "p_player":round(1-p_bank,2),
-            "reason":f"近{len(look)}手分佈：莊{b}/閒{p}，採趨勢延續/平手反向策略。"}
+# ====== GPT 混合分析（全局60% + 最近6手40%） ======
+def gpt_predict(history: List[str]) -> dict:
+    n = len(history)
+    last6 = history[-6:] if n >= 6 else history[:]
+    prompt = (
+        "你是百家樂走勢分析專家，請根據全局統計與最近6手趨勢進行混合分析（全局佔60%、短期佔40%），"
+        "並預測下一局的莊或閒及勝率。\n\n"
+        "請回傳 JSON 格式：\n"
+        "{pick:'莊或閒', p_bank:0~1, p_player:0~1, reason:'簡短中文結論', detail:'完整分析過程'}\n"
+        "注意：\n"
+        "1. p_bank + p_player 必須 = 1\n"
+        "2. reason 最多 15 個字，簡短描述結論\n"
+        "3. detail 要有完整的全局統計與短期分析過程，但不在機器人回覆中顯示\n\n"
+        f"全局序列（{n}手）：{' '.join(history)}\n"
+        f"最近6手：{' '.join(last6)}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.3,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    txt = resp.choices[0].message.content
+    try:
+        data = json.loads(txt)
+    except Exception:
+        log.warning("GPT 回傳非 JSON：%s", txt)
+        data = {"pick":"莊","p_bank":0.5,"p_player":0.5,"reason":"趨勢平衡","detail":"模型回傳非JSON"}
+    # 保護 & 格式化
+    data["p_bank"]   = round(float(data.get("p_bank", 0.5)), 2)
+    data["p_player"] = round(float(data.get("p_player", 0.5)), 2)
+    if abs((data["p_bank"] + data["p_player"]) - 1) > 0.01:
+        data["p_player"] = round(1 - data["p_bank"], 2)
+    data["pick"]     = "莊" if str(data.get("pick","莊")).startswith("莊") else "閒"
+    return data
 
-def fmt(pred):
+# ====== 簡短回覆模板 ======
+def fmt(pred: dict) -> str:
     return (f"✅ 預測：{pred['pick']}\n"
             f"📊 勝率：莊 {int(pred['p_bank']*100)}%、閒 {int(pred['p_player']*100)}%\n"
             f"🧠 統合分析：{pred['reason']}")
@@ -93,16 +121,15 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await m.photo[-1].get_file()
     jpg = preprocess_for_ocr(await file.download_as_bytearray())
     txt = ocr_space_image(jpg)
-    room = build_room_from_ocr_text(txt)
+    hist = build_history_from_text(txt)
     context.user_data["room"] = {
         "built_at": int(time.time()),
-        "history": room["history"],
+        "history": hist,
         "last_input": None,
-        "model": room["model"],
     }
     await m.reply_text(
-        "🧩 房間數據分析完成 ✅\n🧠 AI 模型已建立\n"
-        "1️⃣ 請按「莊/閒」輸入最新開獎\n2️⃣ 再按「繼續分析」預測下一局\n"
+        "🧩 房間數據分析完成 ✅\n🧠 GPT 混合分析模型已建立\n"
+        "1️⃣ 按「莊/閒」輸入最新開獎\n2️⃣ 再按「繼續分析」預測下一局\n"
         "🔁 換房請按「停止分析」。",
         reply_markup=REPLY_KB,
     )
@@ -124,7 +151,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🧹 已清空資料，請重新上傳走勢圖。", reply_markup=REPLY_KB)
 
     room = context.user_data.get("room")
-    if t in ("莊","閒"):
+
+    if t in ("莊", "閒"):
         if not room:
             return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
         room["last_input"] = t
@@ -135,8 +163,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
         if not room.get("last_input"):
             return await update.message.reply_text("請先按「莊/閒」輸入最新開獎。", reply_markup=REPLY_KB)
-        room["history"].append(room["last_input"]); room["last_input"] = None
-        return await update.message.reply_text(fmt(simple_predict(room["history"])), reply_markup=REPLY_KB)
+
+        room["history"].append(room["last_input"])
+        room["last_input"] = None
+
+        pred = gpt_predict(room["history"])
+        return await update.message.reply_text(fmt(pred), reply_markup=REPLY_KB)
 
     await update.message.reply_text("請用下方快捷鍵操作。", reply_markup=REPLY_KB)
 
