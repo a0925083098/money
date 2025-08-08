@@ -1,4 +1,4 @@
-python-telegram-bot==20.8
+python-telegram-bot[webhooks]==20.8
 requests
 pillow
 openai>=1.30.0
