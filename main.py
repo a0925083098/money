@@ -74,7 +74,7 @@ def simple_predict(history: List[str]) -> Dict[str, Any]:
     return {"pick":pick, "p_bank":round(p_bank,2), "p_player":round(1-p_bank,2),
             "reason":f"近{len(look)}手分佈：莊{b}/閒{p}，採趨勢延續/平手反向策略。"}
 
-def fmt(pred):  # 回覆模板
+def fmt(pred):
     return (f"✅ 預測：{pred['pick']}\n"
             f"📊 勝率：莊 {int(pred['p_bank']*100)}%、閒 {int(pred['p_player']*100)}%\n"
             f"🧠 統合分析：{pred['reason']}")
@@ -109,27 +109,35 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = (update.message.text or "").strip()
+
+    if t == "開始預測":
+        await update.message.reply_text(
+            "✅已收到您的請求，請傳百家走勢圖\n\n"
+            "⚠️注意請務必使用文財推薦平台，如有判斷失誤造成失利，後果自負！\n"
+            "使用非推薦平台發現者永久停用機器人資格🚫",
+            reply_markup=REPLY_KB,
+        )
+        return
+
     if t == "停止分析":
         context.user_data.pop("room", None)
         return await update.message.reply_text("🧹 已清空資料，請重新上傳走勢圖。", reply_markup=REPLY_KB)
 
     room = context.user_data.get("room")
-    if t == "開始預測":
-        if not room: return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
-        return await update.message.reply_text(fmt(simple_predict(room["history"])), reply_markup=REPLY_KB)
-
     if t in ("莊","閒"):
-        if not room: return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
+        if not room:
+            return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
         room["last_input"] = t
         return await update.message.reply_text("✅ 已記錄最新開獎，請按「繼續分析」。", reply_markup=REPLY_KB)
 
     if t == "繼續分析":
-        if not room: return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
-        if not room.get("last_input"): return await update.message.reply_text("請先按「莊/閒」輸入最新開獎。", reply_markup=REPLY_KB)
+        if not room:
+            return await update.message.reply_text("尚未建立模型，請先上傳圖片。", reply_markup=REPLY_KB)
+        if not room.get("last_input"):
+            return await update.message.reply_text("請先按「莊/閒」輸入最新開獎。", reply_markup=REPLY_KB)
         room["history"].append(room["last_input"]); room["last_input"] = None
         return await update.message.reply_text(fmt(simple_predict(room["history"])), reply_markup=REPLY_KB)
 
-    # 其他文字
     await update.message.reply_text("請用下方快捷鍵操作。", reply_markup=REPLY_KB)
 
 # ====== 進入點 ======
